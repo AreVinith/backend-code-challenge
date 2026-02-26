@@ -1,5 +1,5 @@
+using CodeChallenge.Api.Logic;
 using CodeChallenge.Api.Models;
-using CodeChallenge.Api.Repositories;
 using Microsoft.AspNetCore.Mvc;
 
 namespace CodeChallenge.Api.Controllers;
@@ -8,26 +8,28 @@ namespace CodeChallenge.Api.Controllers;
 [Route("api/v1/organizations/{organizationId}/messages")]
 public class MessagesController : ControllerBase
 {
-    private readonly IMessageRepository _repository;
+    private readonly IMessageLogic _logic;
     private readonly ILogger<MessagesController> _logger;
 
-    public MessagesController(IMessageRepository repository, ILogger<MessagesController> logger)
+    public MessagesController(IMessageLogic logic, ILogger<MessagesController> logger)
     {
-        _repository = repository;
+        _logic = logic;
         _logger = logger;
     }
 
+    // GET: api/v1/organizations/{organizationId}/messages
     [HttpGet]
     public async Task<ActionResult<IEnumerable<Message>>> GetAll(Guid organizationId)
     {
-        var messages = await _repository.GetAllByOrganizationAsync(organizationId);
+        var messages = await _logic.GetAllMessagesAsync(organizationId);
         return Ok(messages);
     }
 
+    // GET by Id
     [HttpGet("{id}")]
     public async Task<ActionResult<Message>> GetById(Guid organizationId, Guid id)
     {
-        var message = await _repository.GetByIdAsync(organizationId, id);
+        var message = await _logic.GetMessageAsync(organizationId, id);
 
         if (message == null)
         {
@@ -38,57 +40,60 @@ public class MessagesController : ControllerBase
         return Ok(message);
     }
 
+    // CREATE
     [HttpPost]
-    public async Task<ActionResult<Message>> Create(Guid organizationId, [FromBody] CreateMessageRequest request)
+    public async Task<ActionResult> Create(Guid organizationId, [FromBody] CreateMessageRequest request)
     {
-        if (request == null)
-            return BadRequest();
+        var result = await _logic.CreateMessageAsync(organizationId, request);
 
-        var message = new Message
+        return result switch
         {
-            OrganizationId = organizationId,
-            Title = request.Title,
-            Content = request.Content,
-            IsActive = true
+            Created<Message> created => CreatedAtAction(
+                                            nameof(GetById),
+                                            new { organizationId, id = created.Value.Id },
+                                            created.Value),
+
+            ValidationError validation => BadRequest(validation.Errors),
+
+            Conflict conflict => Conflict(conflict.Message),
+
+            _ => StatusCode(500)
         };
-
-        // IMPORTANT: capture returned object
-        var createdMessage = await _repository.CreateAsync(message);
-
-        return CreatedAtAction(
-            nameof(GetById),
-            new { organizationId = organizationId, id = createdMessage.Id },
-            createdMessage);
     }
 
+    // UPDATE
     [HttpPut("{id}")]
     public async Task<ActionResult> Update(Guid organizationId, Guid id, [FromBody] UpdateMessageRequest request)
     {
-        var existing = await _repository.GetByIdAsync(organizationId, id);
+        var result = await _logic.UpdateMessageAsync(organizationId, id, request);
 
-        if (existing == null)
-            return NotFound();
+        return result switch
+        {
+            Updated => NoContent(),
 
-        existing.Title = request.Title;
-        existing.Content = request.Content;
+            NotFound notFound => NotFound(notFound.Message),
 
-        // Call update and CAPTURE result
-        var updatedMessage = await _repository.UpdateAsync(existing);
+            ValidationError validation => BadRequest(validation.Errors),
 
-        if (updatedMessage == null)
-            return NotFound();
-
-        return Ok(updatedMessage);
+            _ => StatusCode(500)
+        };
     }
 
+    // DELETE
     [HttpDelete("{id}")]
     public async Task<ActionResult> Delete(Guid organizationId, Guid id)
     {
-        var deleted = await _repository.DeleteAsync(organizationId, id);
+        var result = await _logic.DeleteMessageAsync(organizationId, id);
 
-        if (!deleted)
-            return NotFound();
+        return result switch
+        {
+            Deleted => NoContent(),
 
-        return NoContent();
+            NotFound notFound => NotFound(notFound.Message),
+
+            ValidationError validation => BadRequest(validation.Errors),
+
+            _ => StatusCode(500)
+        };
     }
 }
